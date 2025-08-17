@@ -1,0 +1,37 @@
+[project]
+name = "creator_camp"
+version = "0.1.0"
+description = "K-ICT Data Creator Camp 2025"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "torch ; platform_system == 'Windows'",
+    "torchvision ; platform_system == 'Windows'",
+    "torch>=2.8.0",
+    "torchvision>=0.23.0",
+    "transformers>=4.55.2",
+    "accelerate>=1.10.0",
+    "supervision>=0.26.1",
+    "tqdm>=4.67.1",
+    "wandb>=0.21.1",
+    "notebook>=7.4.5",
+    "ipywidgets>=8.1.7",
+    "nest-asyncio>=1.6.0",
+    "darkpyonix",
+]
+
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-windows", marker = "platform_system == 'Windows'" },
+]
+torchvision = [
+    { index = "pytorch-windows", marker = "platform_system == 'Windows'" },
+]
+darkpyonix = { git = "https://github.com/choiseungje/darkpyonix-lite.git" }
+
+
+[[tool.uv.index]]
+name = "pytorch-windows"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
