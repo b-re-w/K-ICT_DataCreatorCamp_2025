@@ -23,9 +23,6 @@ nest_asyncio.apply()
 class KompsatDataset(VisionDataset):
     dataset_name = "Kompsat"
 
-    CLASSES = "background", "industrial_area"  # Class definitions: 0=background, 1=industrial_area
-    PALETTE = [90, 90, 90], [0, 0, 0]  # Background: gray, Industrial area: black
-
     @classmethod
     async def download_method(cls, url, root, filename):
         loop = asyncio.get_event_loop()
