@@ -3,7 +3,7 @@ name = "creator_camp"
 version = "0.1.0"
 description = "K-ICT Data Creator Camp 2025"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.13"
 dependencies = [
     "torch ; platform_system == 'Windows'",
     "torchvision ; platform_system == 'Windows'",
