@@ -88,12 +88,14 @@ class KompsatDataset(VisionDataset):
                 poly = ln["shape_attributes"]
                 regions.append(dict(
                     chi_id=int(anno["region_attributes"]["chi_id"]),
-                    xyxy=box_convert(torch.tensor(bbox), "xywh", "xyxy"),
-                    cxcywh=box_convert(torch.tensor(bbox), "xywh", "cxcywh"),
+                    xyxy=box_convert(torch.tensor(bbox), "xywh", "xyxy").tolist(),
+                    cxcywh=box_convert(torch.tensor(bbox), "xywh", "cxcywh").tolist(),
                     polyline=[poly["all_points_x"][0], poly["all_points_y"][0], poly["all_points_x"][1], poly["all_points_y"][1]],
                     chi_height=float(ln["region_attributes"]['chi_height_m']),
                 ))
             label['regions'] = regions
+            label['file_attributes']['img_width'] = int(label['file_attributes']['img_width'])
+            label['file_attributes']['img_height'] = int(label['file_attributes']['img_height'])
             self.labels.append(label)
 
         assert len(self.images) == len(self.labels), \
