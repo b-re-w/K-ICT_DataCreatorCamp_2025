@@ -88,6 +88,7 @@ class KompsatDataset(VisionDataset):
                 poly = ln["shape_attributes"]
                 regions.append(dict(
                     chi_id=int(anno["region_attributes"]["chi_id"]),
+                    xywh=bbox,
                     xyxy=box_convert(torch.tensor(bbox), "xywh", "xyxy").tolist(),
                     cxcywh=box_convert(torch.tensor(bbox), "xywh", "cxcywh").tolist(),
                     polyline=[poly["all_points_x"][0], poly["all_points_y"][0], poly["all_points_x"][1], poly["all_points_y"][1]],
