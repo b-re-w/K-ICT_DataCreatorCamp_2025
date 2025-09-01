@@ -1,4 +1,4 @@
-from .kompsat import KompsatDataset
+from .kompsat import KompsatDataset, KompsatDatasetForObjectDetection, KompsatDatasetForHeightRegression
 from .sentinel import SentinelDataset
 
 from dataclasses import dataclass

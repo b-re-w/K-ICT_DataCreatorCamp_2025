@@ -7,6 +7,7 @@ import torch
 import traceback
 from os import path
 from glob import glob
+from enum import Enum
 from pathlib import Path
 from typing import Union, Optional, Callable
 
@@ -18,6 +19,11 @@ import asyncio
 
 import nest_asyncio
 nest_asyncio.apply()
+
+
+class KompsatType(Enum):
+    BBOX = "bbox"
+    LINE = "line"
 
 
 class KompsatDataset(VisionDataset):
@@ -43,6 +49,7 @@ class KompsatDataset(VisionDataset):
         self,
         root: Union[str, Path] = None,
         train: bool = True,
+        data_type: KompsatType = KompsatType.BBOX,
         transform: Optional[Callable] = None,
         target_transform: Optional[Callable] = None
     ):
@@ -52,6 +59,7 @@ class KompsatDataset(VisionDataset):
         Args:
             root: Dataset root directory
             train: True for training set, False for validation set
+            data_type: BBOX or LINE
             transform: Image transforms
             target_transform: Mask transforms
         """
@@ -62,6 +70,7 @@ class KompsatDataset(VisionDataset):
 
         self.root = path.join(root, self.dataset_name)
         self.train = train
+        self.data_type = data_type
         split = "train" if train else "val"
         img_dir = path.join(self.root, "images", split)
         ann_dir = path.join(self.root, "annotations", split)
@@ -70,34 +79,47 @@ class KompsatDataset(VisionDataset):
         self.images = sorted(glob(path.join(img_dir, "*.jpg")))
         self.labels = []
         for pth in self.images:
-            annotation_path = path.join(ann_dir, Path(pth).stem + ".json")
-            label_path = path.join(line_dir, Path(pth).stem + ".json")
-            if not path.exists(annotation_path):
-                raise FileNotFoundError(f"Annotation file {annotation_path} does not exist.")
-            if not path.exists(label_path):
-                raise FileNotFoundError(f"Label file {label_path} does not exist.")
-            annotation = list(json_load(open(annotation_path, "r", encoding="utf-8")).values())[0]
-            label = list(json_load(open(label_path, "r", encoding="utf-8")).values())[0]
-            regions = []
-            for anno, ln in zip(
-                sorted(annotation['regions'], key=lambda x: int(x['region_attributes']['chi_id'])),
-                sorted(label['regions'], key=lambda x: int(x['region_attributes']['chi_id']))
-            ):
-                bbox = anno["shape_attributes"]
-                bbox = [bbox["x"], bbox["y"], bbox["width"], bbox["height"]]
-                poly = ln["shape_attributes"]
-                regions.append(dict(
-                    chi_id=int(anno["region_attributes"]["chi_id"]),
-                    xywh=bbox,
-                    xyxy=box_convert(torch.tensor(bbox), "xywh", "xyxy").tolist(),
-                    cxcywh=box_convert(torch.tensor(bbox), "xywh", "cxcywh").tolist(),
-                    polyline=[poly["all_points_x"][0], poly["all_points_y"][0], poly["all_points_x"][1], poly["all_points_y"][1]],
-                    chi_height=float(ln["region_attributes"]['chi_height_m']),
-                ))
-            label['regions'] = regions
-            label['file_attributes']['img_width'] = int(label['file_attributes']['img_width'])
-            label['file_attributes']['img_height'] = int(label['file_attributes']['img_height'])
-            self.labels.append(label)
+            if data_type is KompsatType.BBOX:
+                annotation_path = path.join(ann_dir, Path(pth).stem + ".json")
+                if not path.exists(annotation_path):
+                    raise FileNotFoundError(f"Annotation file {annotation_path} does not exist.")
+                annotation = list(json_load(open(annotation_path, "r", encoding="utf-8")).values())[0]
+                regions = []
+                for anno in sorted(annotation['regions'], key=lambda x: int(x['region_attributes']['chi_id'])):
+                    bbox = anno["shape_attributes"]
+                    bbox = [bbox["x"], bbox["y"], bbox["width"], bbox["height"]]
+                    regions.append(dict(
+                        chi_id=int(anno["region_attributes"]["chi_id"]),
+                        xywh=bbox,
+                        xyxy=box_convert(torch.tensor(bbox), "xywh", "xyxy").tolist(),
+                        cxcywh=box_convert(torch.tensor(bbox), "xywh", "cxcywh").tolist()
+                    ))
+                annotation['regions'] = regions
+                annotation['file_attributes']['img_width'] = int(annotation['file_attributes']['img_width'])
+                annotation['file_attributes']['img_height'] = int(annotation['file_attributes']['img_height'])
+                self.labels.append(annotation)
+            else:
+                label_path = path.join(line_dir, Path(pth).stem + ".json")
+                if not path.exists(label_path):
+                    raise FileNotFoundError(f"Label file {label_path} does not exist.")
+                label = list(json_load(open(label_path, "r", encoding="utf-8")).values())[0]
+                regions = []
+                for ln in sorted(label['regions'], key=lambda x: int(x['region_attributes']['chi_id'])):
+                    poly = ln["shape_attributes"]
+                    xyxy = [poly["all_points_x"][0], poly["all_points_y"][0], poly["all_points_x"][1], poly["all_points_y"][1]]
+                    x1 = min(xyxy[0], xyxy[2])
+                    y1 = min(xyxy[1], xyxy[3])
+                    w = abs(xyxy[2] - xyxy[0])
+                    h = abs(xyxy[3] - xyxy[1])
+                    regions.append(dict(
+                        polyline=xyxy,
+                        polyline_xywh=[x1, y1, w, h],
+                        chi_height=float(ln["region_attributes"]['chi_height_m']),
+                    ))
+                label['regions'] = regions
+                label['file_attributes']['img_width'] = int(label['file_attributes']['img_width'])
+                label['file_attributes']['img_height'] = int(label['file_attributes']['img_height'])
+                self.labels.append(label)
 
         assert len(self.images) == len(self.labels), \
             f"Number of images ({len(self.images)}) and labels ({len(self.labels)}) do not match."
@@ -154,3 +176,25 @@ class KompsatDataset(VisionDataset):
             cls.extract_method(path.join(root, KompsatIndex.VALID_LINE.value), to_path=as_valid(line_dir)),
         ))
         await tqdm.gather(*routines, desc="Extracting files")
+
+
+class KompsatDatasetForObjectDetection(KompsatDataset):
+    def __init__(
+        self,
+        root: Union[str, Path] = None,
+        train: bool = True,
+        transform: Optional[Callable] = None,
+        target_transform: Optional[Callable] = None
+    ):
+        super().__init__(root, train, KompsatType.BBOX, transform, target_transform)
+
+
+class KompsatDatasetForHeightRegression(KompsatDataset):
+    def __init__(
+        self,
+        root: Union[str, Path] = None,
+        train: bool = True,
+        transform: Optional[Callable] = None,
+        target_transform: Optional[Callable] = None
+    ):
+        super().__init__(root, train, KompsatType.LINE, transform, target_transform)
