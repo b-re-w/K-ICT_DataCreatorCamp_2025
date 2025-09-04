@@ -109,8 +109,8 @@ class KompsatDataset(VisionDataset):
                     xyxy = [poly["all_points_x"][0], poly["all_points_y"][0], poly["all_points_x"][1], poly["all_points_y"][1]]
                     x1 = min(xyxy[0], xyxy[2])
                     y1 = min(xyxy[1], xyxy[3])
-                    w = abs(xyxy[2] - xyxy[0])
-                    h = abs(xyxy[3] - xyxy[1])
+                    w = max(abs(xyxy[2] - xyxy[0]), 1)  # w must be at least 1
+                    h = max(abs(xyxy[3] - xyxy[1]), 1)  # h must be at least 1
                     regions.append(dict(
                         polyline=xyxy,
                         polyline_xywh=[x1, y1, w, h],
