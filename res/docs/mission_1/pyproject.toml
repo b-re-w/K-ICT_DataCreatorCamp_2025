@@ -1,0 +1,12 @@
+[project]
+name = "mission1"
+version = "0.1.0"
+description = "Mission 1"
+readme = "README.md"
+requires-python = "==3.9.*"
+dependencies = [
+    "Pillow",
+    "PyYAML",
+    "ultralytics",
+    "wandb"
+]

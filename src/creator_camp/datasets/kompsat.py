@@ -107,13 +107,13 @@ class KompsatDataset(VisionDataset):
                 for ln in sorted(label['regions'], key=lambda x: int(x['region_attributes']['chi_id'])):
                     poly = ln["shape_attributes"]
                     xyxy = [poly["all_points_x"][0], poly["all_points_y"][0], poly["all_points_x"][1], poly["all_points_y"][1]]
-                    x1 = min(xyxy[0], xyxy[2])
-                    y1 = min(xyxy[1], xyxy[3])
-                    w = max(abs(xyxy[2] - xyxy[0]), 1)  # w must be at least 1
-                    h = max(abs(xyxy[3] - xyxy[1]), 1)  # h must be at least 1
+                    x1 = max(min(xyxy[0], xyxy[2]) - 1, 0)
+                    y1 = max(min(xyxy[1], xyxy[3]) - 1, 0)
+                    w = abs(xyxy[2] - xyxy[0]) + 2
+                    h = max(abs(xyxy[3] - xyxy[1]), 1) + 2
                     regions.append(dict(
                         polyline=xyxy,
-                        polyline_xywh=[x1, y1, w, h],
+                        xywh=[x1, y1, w, h],
                         chi_height=float(ln["region_attributes"]['chi_height_m']),
                     ))
                 label['regions'] = regions
