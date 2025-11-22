@@ -48,7 +48,7 @@
 - Unit: meter
 - Metric: RMSE
 
-#### Mission 3 (Semantic Segmentation)
+#### Mission 3, 4 (Semantic Segmentation)
 ```json
 "shape_attributes": {'name': "rect", 'x': 336, 'y': 280, 'width': 45, 'height': 100}
 ```
@@ -76,3 +76,9 @@
 - Segmentation에는 SwinT + UperNet 기반 모델이 성능이 높을 것으로 보임
 - UperNetForSemanticSegmentation 프리트레인 파인튜닝해 사용하거나
 - SegFormer-B2도 비교 실험 진행
+
+
+---
+
+### Insights
+- 대회에서 지정한 데이터셋이 난이도가 그다지 높지 않고, 데이터셋의 수가 적어 CNN 계열의 모델들이 성능 상으로 높은 우위를 가짐
