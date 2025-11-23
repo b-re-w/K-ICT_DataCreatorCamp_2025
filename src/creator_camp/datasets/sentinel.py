@@ -5,6 +5,7 @@ from torchvision.datasets import VisionDataset, utils, folder
 import traceback
 from os import path
 from glob import glob
+from enum import Enum
 from pathlib import Path
 from typing import Union, Optional, Callable
 
@@ -14,6 +15,13 @@ import asyncio
 
 import nest_asyncio
 nest_asyncio.apply()
+
+
+class SentinelType(Enum):
+    RGB = "rgb"
+    RGBNIR = "rgbnir"
+    RGBNIRGEMS = "rgbnirgems"
+    RGBNIRGEMSAIR = "rgbnirgemstair"
 
 
 class SentinelDataset(VisionDataset):
@@ -42,6 +50,7 @@ class SentinelDataset(VisionDataset):
         self,
         root: Union[str, Path] = None,
         train: bool = True,
+        data_type: SentinelType = SentinelType.RGB,
         transforms: Optional[Callable] = None,
         transform: Optional[Callable] = None,
         target_transform: Optional[Callable] = None
@@ -105,7 +114,12 @@ class SentinelDataset(VisionDataset):
         if path.exists(dataset_root):  # If the dataset directory already exists, skip download
             return
 
-        data_list = [SentinelIndex.TRAIN, SentinelIndex.VALID, SentinelIndex.TRAIN_MASK, SentinelIndex.VALID_MASK]
+        data_list = [
+            SentinelIndex.TRAIN, SentinelIndex.VALID,
+            SentinelIndex.TRAIN_MASK, SentinelIndex.VALID_MASK,
+            SentinelIndex.TRAIN_GEMS, SentinelIndex.VALID_GEMS,
+            SentinelIndex.TRAIN_AIR, SentinelIndex.VALID_AIR,
+        ]
 
         print(f"INFO: Downloading '{cls.dataset_name}' from server to {root}...")
         routines = []
@@ -114,33 +128,23 @@ class SentinelDataset(VisionDataset):
                 print(f"INFO: Dataset archive {data.value} found in the root directory. Skipping download.")
                 continue
 
-            if data == SentinelIndex.TRAIN:
-                routines.extend(
-                    cls.download_method(url, root=root, filename=file)
-                    for url, file in zip(
-                        SentinelIndex.get_partial_train_urls(),
-                        SentinelIndex.get_partial_trains(),
-                    )
-                )
-            else:
-                routines.append(cls.download_method(data.url, root=root, filename=data.value))
+            routines.extend(cls.download_method(url, root=root, filename=file) for url, file in zip(data.urls, data.names))
         await tqdm.gather(*routines, desc="Downloading files")
 
         print(f"INFO: Extracting '{cls.dataset_name}' dataset...")
         routines = []
-        img_dir, anno_dir = path.join(dataset_root, "images"), path.join(dataset_root, "annotations")
         as_train, as_valid = lambda d: path.join(d, "train"), lambda d: path.join(d, "val")
-        if path.isfile(path.join(root, SentinelIndex.TRAIN.value)):
-            routines.append(cls.extract_method(path.join(root, SentinelIndex.TRAIN.value), to_path=as_train(img_dir)))
-        else:
-            routines.extend(
-                cls.extract_method(
-                    path.join(root, file), to_path=as_train(img_dir)
-                ) for file in SentinelIndex.get_partial_trains()
-            )
-        routines.extend((
-            cls.extract_method(path.join(root, SentinelIndex.VALID.value), to_path=as_valid(img_dir)),
-            cls.extract_method(path.join(root, SentinelIndex.TRAIN_MASK.value), to_path=as_train(anno_dir)),
-            cls.extract_method(path.join(root, SentinelIndex.VALID_MASK.value), to_path=as_valid(anno_dir)),
-        ))
+        extract_dirs = [path.join(dataset_root, anno) for anno in ["images", "annotations", "gems", "air"]]
+        train_list = [SentinelIndex.TRAIN, SentinelIndex.TRAIN_MASK, SentinelIndex.TRAIN_GEMS, SentinelIndex.TRAIN_AIR]  # should be matched order with extract_dirs and valid_list
+        valid_list = [SentinelIndex.VALID, SentinelIndex.VALID_MASK, SentinelIndex.VALID_GEMS, SentinelIndex.VALID_AIR]
+        for trains in train_list:
+            routines.extend(cls.extract_method(path.join(root, file), to_path=as_train(dirs)) for file, dirs in zip(trains.names, extract_dirs))
+        for valids in valid_list:
+            routines.extend(cls.extract_method(path.join(root, file), to_path=as_valid(dirs)) for file, dirs in zip(valids.names, extract_dirs))
+
         await tqdm.gather(*routines, desc="Extracting files")
+
+
+class SentinelDatasetForSegmentation(SentinelDataset):
+    dataset_name = "Sentinel_Segmentation"
+
