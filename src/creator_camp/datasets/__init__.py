@@ -1,5 +1,6 @@
 from .kompsat import KompsatDataset, KompsatDatasetForObjectDetection, KompsatDatasetForHeightRegression
-from .sentinel import SentinelDataset
+from .sentinel import SentinelDataset, SentinelDatasetForSegmentation, DatasetModals
+from .landsat import LandsatDataset, LandsatDatasetForSegmentation, LandsatIndex
 
 from dataclasses import dataclass
 from torch.utils.data import Dataset
@@ -22,3 +23,10 @@ class DatasetHolder:
             if self.train: print(', ', end='')
             print(f"Test: {len(self.test)}", end='')
         print('\n')
+
+
+@dataclass
+class DataLoaderHolder:
+    train: object = None
+    valid: object = None
+    test: object = None

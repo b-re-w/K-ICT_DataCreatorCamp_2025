@@ -18,6 +18,8 @@ dependencies = [
     "ipywidgets>=8.1.7",
     "nest-asyncio>=1.6.0",
     "rasterio>=1.4.3",
+    "segmentation-models-pytorch>=0.5.0",
+    "pytorch-lightning>=2.5.6",
 ]
 
 

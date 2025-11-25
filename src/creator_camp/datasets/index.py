@@ -71,3 +71,11 @@ class LandsatIndex(Enum):
     @property
     def url(self):
         return f"{base_git_path}{self.value}"
+
+    @property
+    def urls(self):
+        return [self.url]
+
+    @property
+    def names(self):
+        return [self.value]

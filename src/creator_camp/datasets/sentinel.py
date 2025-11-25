@@ -1,13 +1,15 @@
-from .index import SentinelIndex
-
-from torchvision.datasets import VisionDataset, utils, folder
-
 import traceback
 from os import path
 from glob import glob
 from enum import Enum
 from pathlib import Path
 from typing import Union, Optional, Callable
+
+import numpy as np
+import torch
+
+from torchvision.datasets import VisionDataset, utils
+import rasterio
 
 from tqdm.asyncio import tqdm
 import concurrent.futures
@@ -16,19 +18,32 @@ import asyncio
 import nest_asyncio
 nest_asyncio.apply()
 
+from .index import SentinelIndex
 
-class SentinelType(Enum):
+
+class DatasetModals(Enum):
     RGB = "rgb"
-    RGBNIR = "rgbnir"
-    RGBNIRGEMS = "rgbnirgems"
-    RGBNIRGEMSAIR = "rgbnirgemstair"
+    NIR = "nir"
+    GEMS = "gems"
+    AIR = "air"
 
 
 class SentinelDataset(VisionDataset):
     dataset_name = "Sentinel"
 
     CLASSES = "background", "industrial_area"  # Class definitions: 0=background, 1=industrial_area
-    PALETTE = [90, 90, 90], [0, 0, 0]  # Background: gray, Industrial area: black
+    PALETTE = [0], [1]  # Grayscale palette | Background: black, Industrial area: white
+    ORIGINAL_PALETTE = [90, 90, 90], [10, 10, 10]  # Background: gray, Industrial area: black
+
+    DIRECTORIES = ["images", "masks", "gems", "air"]
+    DATA_LIST = [
+        SentinelIndex.TRAIN, SentinelIndex.VALID,
+        SentinelIndex.TRAIN_MASK, SentinelIndex.VALID_MASK,
+        SentinelIndex.TRAIN_GEMS, SentinelIndex.VALID_GEMS,
+        SentinelIndex.TRAIN_AIR, SentinelIndex.VALID_AIR,
+    ]
+    TRAIN_LIST = [SentinelIndex.TRAIN, SentinelIndex.TRAIN_MASK, SentinelIndex.TRAIN_GEMS, SentinelIndex.TRAIN_AIR]  # should be matched order with extract_dirs and valid_list
+    VALID_LIST = [SentinelIndex.VALID, SentinelIndex.VALID_MASK, SentinelIndex.VALID_GEMS, SentinelIndex.VALID_AIR]
 
     @classmethod
     async def download_method(cls, url, root, filename):
@@ -50,7 +65,7 @@ class SentinelDataset(VisionDataset):
         self,
         root: Union[str, Path] = None,
         train: bool = True,
-        data_type: SentinelType = SentinelType.RGB,
+        data_type: DatasetModals | list[DatasetModals] = DatasetModals.RGB,
         transforms: Optional[Callable] = None,
         transform: Optional[Callable] = None,
         target_transform: Optional[Callable] = None
@@ -70,43 +85,97 @@ class SentinelDataset(VisionDataset):
         loop = asyncio.get_event_loop()
         loop.run_until_complete(self.download(root))
 
+        self.types = data_type if isinstance(data_type, list) else [data_type]
         self.root = path.join(root, self.dataset_name)
         self.train = train
         split = "train" if train else "val"
-        img_dir = path.join(self.root, "images", split)
-        ann_dir = path.join(self.root, "annotations", split)
-
-        self.images = sorted(glob(path.join(img_dir, "*.tif")))
-        self.masks = sorted(glob(path.join(ann_dir, "*.tif")))
+        self.images, self.masks, self.gems, self.air = lists = [], [], [], []
+        extract_dirs = [path.join(self.root, anno, split) for anno in self.DIRECTORIES]
+        for lst, anno in zip(lists, self.DIRECTORIES):
+            lst.extend(sorted(glob(path.join(extract_dirs[self.DIRECTORIES.index(anno)], "*.tif"))))
 
         assert len(self.images) == len(self.masks), \
             f"Number of images ({len(self.images)}) and masks ({len(self.masks)}) do not match."
+        if DatasetModals.GEMS in self.types:
+            assert len(self.images) == len(self.gems), \
+                f"Number of images ({len(self.images)}) and GEMS data ({len(self.gems)}) do not match."
+        if DatasetModals.AIR in self.types:
+            assert len(self.images) == len(self.air), \
+                f"Number of images ({len(self.images)}) and AIR data ({len(self.air)}) do not match."
+
+        self.cached_data = {}
 
     def __len__(self):
         return len(self.images)
 
     def __getitem__(self, idx):
-        """Get a sample from the dataset"""
-        # Load image/mask using default_loader
-        image = folder.default_loader(self.images[idx])
-        mask = folder.default_loader(self.masks[idx])
+        if idx in self.cached_data:
+            image, mask, gems, air = self.cached_data[idx]
+        else:
+            # Load image/mask using default_loader
+            image = self.load_raster(self.images[idx], channels=(1, 2, 3, 4) if DatasetModals.NIR in self.types else (1, 2, 3), normalize=True)
+            mask = self.load_raster(self.masks[idx])
 
-        # Convert mask to grayscale
-        if mask.mode != 'L':
-            mask = mask.convert('L')
+            # Convert mask to grayscale
+            mask = torch.where(mask == 10, 1, 0).to(torch.uint8)
+
+            # Load additional data if specified
+            gems, air = None, None
+            if DatasetModals.GEMS in self.types:
+                gems = self.load_raster(self.gems[idx], channels=range(1, 11), normalize=True)
+            if DatasetModals.AIR in self.types:
+                air = self.load_raster(self.air[idx], channels=range(1, 7), normalize=True)
+    
+            # Cache the loaded data
+            self.cached_data[idx] = (image, mask, gems, air)
 
         # Apply transforms
         if self.transforms:
             # Joint transforms (e.g., albumentations)
-            image, mask = self.transforms(image, mask)
+            try:
+                image, mask, gems, air = self.transforms(image, mask, gems, air)
+            except Exception:
+                image, mask = self.transforms(image, mask)
         else:
             # Individual transforms
             if self.transform:
                 image = self.transform(image)
             if self.target_transform:
-                mask = self.target_transform(mask)
+                try:
+                    mask, gems, air = self.target_transform(mask, gems, air)
+                except Exception:
+                    mask = self.target_transform(mask)
 
-        return image, mask
+        return image, mask, gems, air
+
+    def load_raster(self, path: Path, channels=(1,), normalize=False) -> torch.Tensor:
+        """
+        Load TIF image using rasterio.
+    
+        Args:
+            path: Path to TIF file
+            channels: Channels to read (1-based indexing)
+            normalize: Whether to normalize the image to 0-1 range
+    
+        Returns:
+            Normalized image array in (C, H, W) format
+        """
+        with rasterio.open(path) as src:
+            data = src.read(channels)
+
+        # Normalize to 0-1
+        if normalize:
+            data = data.astype(np.float32)
+            # Channel-wise Z-score normalization
+            for i in range(data.shape[0]):
+                channel_min = data[i].min()
+                channel_max = data[i].max()
+                diff = channel_max - channel_min
+                if diff != 0:
+                    data[i] = (data[i] - channel_min) / diff
+                else:
+                    data[i] = 0
+        return torch.from_numpy(data)
 
     @classmethod
     async def download(cls, root: str):
@@ -114,37 +183,27 @@ class SentinelDataset(VisionDataset):
         if path.exists(dataset_root):  # If the dataset directory already exists, skip download
             return
 
-        data_list = [
-            SentinelIndex.TRAIN, SentinelIndex.VALID,
-            SentinelIndex.TRAIN_MASK, SentinelIndex.VALID_MASK,
-            SentinelIndex.TRAIN_GEMS, SentinelIndex.VALID_GEMS,
-            SentinelIndex.TRAIN_AIR, SentinelIndex.VALID_AIR,
-        ]
-
         print(f"INFO: Downloading '{cls.dataset_name}' from server to {root}...")
         routines = []
-        for data in data_list:
+        for data in cls.DATA_LIST:
             if path.isfile(path.join(root, data.value)):
                 print(f"INFO: Dataset archive {data.value} found in the root directory. Skipping download.")
                 continue
 
             routines.extend(cls.download_method(url, root=root, filename=file) for url, file in zip(data.urls, data.names))
-        await tqdm.gather(*routines, desc="Downloading files")
+        await tqdm.gather(*routines, desc=f"Downloading {len(routines)} files")
 
         print(f"INFO: Extracting '{cls.dataset_name}' dataset...")
         routines = []
         as_train, as_valid = lambda d: path.join(d, "train"), lambda d: path.join(d, "val")
-        extract_dirs = [path.join(dataset_root, anno) for anno in ["images", "annotations", "gems", "air"]]
-        train_list = [SentinelIndex.TRAIN, SentinelIndex.TRAIN_MASK, SentinelIndex.TRAIN_GEMS, SentinelIndex.TRAIN_AIR]  # should be matched order with extract_dirs and valid_list
-        valid_list = [SentinelIndex.VALID, SentinelIndex.VALID_MASK, SentinelIndex.VALID_GEMS, SentinelIndex.VALID_AIR]
-        for trains in train_list:
-            routines.extend(cls.extract_method(path.join(root, file), to_path=as_train(dirs)) for file, dirs in zip(trains.names, extract_dirs))
-        for valids in valid_list:
-            routines.extend(cls.extract_method(path.join(root, file), to_path=as_valid(dirs)) for file, dirs in zip(valids.names, extract_dirs))
+        extract_dirs = [path.join(dataset_root, anno) for anno in cls.DIRECTORIES]
+        for trains, dirs in zip(cls.TRAIN_LIST, extract_dirs):
+            routines.extend(cls.extract_method(path.join(root, file), to_path=as_train(dirs)) for file in trains.names)
+        for valids, dirs in zip(cls.VALID_LIST, extract_dirs):
+            routines.extend(cls.extract_method(path.join(root, file), to_path=as_valid(dirs)) for file in valids.names)
 
-        await tqdm.gather(*routines, desc="Extracting files")
+        await tqdm.gather(*routines, desc=f"Extracting {len(routines)} files")
 
 
 class SentinelDatasetForSegmentation(SentinelDataset):
-    dataset_name = "Sentinel_Segmentation"
-
+    pass
